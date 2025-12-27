@@ -17,13 +17,12 @@ import java.util.function.Function;
 
 public class VoxyClient implements ClientModInitializer {
     private static final HashSet<String> FREX = new HashSet<>();
-    private static boolean sodiumAvailable = false;
-
-    static {
-        sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium");
-    }
+    private static Boolean sodiumAvailable = null;
 
     public static boolean isSodiumAvailable() {
+        if (sodiumAvailable == null) {
+            sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium");
+        }
         return sodiumAvailable;
     }
 
@@ -49,8 +48,8 @@ public class VoxyClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        if (!sodiumAvailable) {
-            Logger.error("Sodium is not installed. Voxy requires Sodium to function on the client.");
+        if (!isSodiumAvailable()) {
+            Logger.error("Sodium is not installed. Voxy requires Sodium to function on the client. Please install Sodium to use Voxy client features. Server-side LOD sync will continue to work.");
             return;
         }
 
