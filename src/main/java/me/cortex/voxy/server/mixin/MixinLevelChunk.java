@@ -34,7 +34,7 @@ public abstract class MixinLevelChunk {
      * Intercept block state changes to trigger LOD updates.
      * This queues the chunk for LOD regeneration when blocks are modified.
      */
-    @Inject(method = "setBlockState", at = @At("RETURN"))
+    @Inject(method = "setBlockState(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;Z)Lnet/minecraft/world/level/block/state/BlockState;", at = @At("RETURN"))
     private void voxy$onBlockStateChange(BlockPos pos, BlockState state, boolean moved, CallbackInfoReturnable<BlockState> cir) {
         if (cir.getReturnValue() != null) {
             var level = this.getLevel();
