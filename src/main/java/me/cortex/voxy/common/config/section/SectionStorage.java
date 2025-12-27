@@ -7,4 +7,6 @@ public abstract class SectionStorage implements IMappingStorage {
     public abstract int loadSection(WorldSection into);
 
     public abstract void saveSection(WorldSection section);
+
+    public abstract void deleteSectionData(long key);
 }

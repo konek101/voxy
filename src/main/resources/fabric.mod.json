@@ -20,6 +20,9 @@
     "client": [
       "me.cortex.voxy.client.VoxyClient"
     ],
+    "server": [
+      "me.cortex.voxy.server.VoxyServer"
+    ],
     "modmenu": [
       "me.cortex.voxy.client.config.ModMenuIntegration"
     ],
@@ -31,6 +34,10 @@
     {
       "config": "client.voxy.mixins.json",
       "environment": "client"
+    },
+    {
+      "config": "server.voxy.mixins.json",
+      "environment": "server"
     },
     "common.voxy.mixins.json"
   ],
