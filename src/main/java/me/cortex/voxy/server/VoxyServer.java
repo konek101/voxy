@@ -133,9 +133,10 @@ public class VoxyServer implements DedicatedServerModInitializer {
             var engine = serverInstance.getOrCreate(identifier);
             if (engine == null) continue;
             
+            MemoryBuffer data = null;
             try {
                 // Create a memory buffer from the compressed data
-                var data = new MemoryBuffer(packet.compressedData.length);
+                data = new MemoryBuffer(packet.compressedData.length);
                 MemoryUtil.memByteBuffer(data.address, (int) data.size).put(packet.compressedData);
                 
                 var section = engine.acquire(packet.sectionKey);
@@ -150,9 +151,12 @@ public class VoxyServer implements DedicatedServerModInitializer {
                         section.release();
                     }
                 }
-                data.free();
             } catch (Exception e) {
                 Logger.error("Error handling client LOD upload", e);
+            } finally {
+                if (data != null) {
+                    data.free();
+                }
             }
             break;
         }

@@ -103,6 +103,8 @@ public class ClientLodNetworkHandler {
         }
 
         // Deserialize and load the section
+        // WARNING: This may cause crashes if server and client have different block state mappings.
+        // The server's Mapper assigns different internal IDs than the client's Mapper.
         try {
             // Create a memory buffer from the compressed data
             var data = new MemoryBuffer(packet.compressedData.length);
@@ -120,7 +122,7 @@ public class ClientLodNetworkHandler {
             }
             data.free();
         } catch (Exception e) {
-            Logger.error("Error handling LOD section data from server", e);
+            Logger.error("Error handling LOD section data from server. This may be caused by block state ID mismatch between server and client.", e);
         }
     }
 
@@ -202,17 +204,21 @@ public class ClientLodNetworkHandler {
             return; // Server doesn't support LOD uploads
         }
         
+        me.cortex.voxy.common.util.MemoryBuffer serializedData = null;
         try {
-            var serializedData = SaveLoadSystem3.serialize(section);
+            serializedData = SaveLoadSystem3.serialize(section);
             byte[] data = new byte[(int) serializedData.size];
             MemoryUtil.memByteBuffer(serializedData.address, (int) serializedData.size).get(data);
-            serializedData.free();
             
             var buf = PacketByteBufs.create();
             new LodSectionUploadPacket(section.key, data, worldId.getWorldId()).write(buf);
             ClientPlayNetworking.send(LodSectionUploadPacket.ID, buf);
         } catch (Exception e) {
             Logger.error("Error uploading LOD section to server", e);
+        } finally {
+            if (serializedData != null) {
+                serializedData.free();
+            }
         }
     }
     

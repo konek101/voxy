@@ -26,6 +26,9 @@ public class VoxyConfig implements OptionStorage<VoxyConfig> {
     public boolean enabled = true;
     public boolean enableRendering = true;
     public boolean ingestEnabled = true;
+    // WARNING: Server LOD sync is currently experimental and may cause crashes
+    // due to block state ID mismatches between server and client Mappers.
+    // Only enable if you understand the risks.
     public boolean useServerLods = false; // When true, client disables local LOD generation and relies on server
     public boolean uploadLodsToServer = false; // When true, client uploads generated LODs to server
     public int sectionRenderDistance = 16;
