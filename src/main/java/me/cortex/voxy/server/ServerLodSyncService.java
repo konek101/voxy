@@ -13,8 +13,10 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.level.ServerPlayer;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Service for synchronizing LOD sections between server and all connected players.
@@ -25,7 +27,7 @@ public class ServerLodSyncService {
     private final ConcurrentHashMap<ServerPlayer, PlayerSyncState> playerStates = new ConcurrentHashMap<>();
     private volatile boolean running = true;
     private final Thread syncThread;
-    private final ConcurrentLinkedDeque<SectionUpdate> pendingUpdates = new ConcurrentLinkedDeque<>();
+    private final BlockingQueue<SectionUpdate> pendingUpdates = new LinkedBlockingQueue<>();
 
     private record SectionUpdate(WorldIdentifier worldId, long sectionKey, byte[] data, boolean isDelete) {}
     
@@ -48,12 +50,10 @@ public class ServerLodSyncService {
     private void syncLoop() {
         while (this.running) {
             try {
-                SectionUpdate update = this.pendingUpdates.poll();
+                // Use blocking poll with timeout to avoid busy waiting
+                SectionUpdate update = this.pendingUpdates.poll(100, TimeUnit.MILLISECONDS);
                 if (update != null) {
                     broadcastUpdate(update);
-                } else {
-                    //noinspection BusyWait
-                    Thread.sleep(10);
                 }
             } catch (InterruptedException e) {
                 // Exit loop on interrupt
@@ -140,6 +140,7 @@ public class ServerLodSyncService {
     private void sendExistingLodsToPlayer(PlayerSyncState state, String worldId) {
         var player = state.player;
         if (!player.isAlive() || player.hasDisconnected()) return;
+        if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) return;
 
         // Find the world engine for this world ID
         // We iterate through server levels to find matching world
@@ -155,8 +156,8 @@ public class ServerLodSyncService {
 
             // Iterate through all stored sections and send them
             engine.storage.iterateStoredSectionPositions(sectionKey -> {
+                // Early exit if player is no longer valid
                 if (!player.isAlive() || player.hasDisconnected()) return;
-                if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) return;
 
                 try {
                     var section = engine.acquireIfExists(sectionKey);

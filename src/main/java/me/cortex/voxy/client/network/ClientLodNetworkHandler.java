@@ -36,17 +36,19 @@ public class ClientLodNetworkHandler {
             client.execute(() -> handleSectionDelete(packet));
         });
 
-        // When joining a server, request LOD data
+        // When joining a server, request LOD data after a delay
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            // Delay the request to ensure we have world info
-            client.execute(() -> {
+            // Schedule the request with a delay to ensure world info is ready
+            // Using a separate thread to avoid blocking the render thread
+            new Thread(() -> {
                 try {
                     Thread.sleep(1000); // Wait for world to be ready
+                    // Execute on client thread
+                    client.execute(ClientLodNetworkHandler::requestLodData);
                 } catch (InterruptedException e) {
-                    // Ignore
+                    // Ignore - we're shutting down
                 }
-                requestLodData();
-            });
+            }, "Voxy-LOD-Request-Delay").start();
         });
 
         Logger.info("Client LOD network handler initialized");
