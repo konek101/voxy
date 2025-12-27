@@ -17,6 +17,15 @@ import java.util.function.Function;
 
 public class VoxyClient implements ClientModInitializer {
     private static final HashSet<String> FREX = new HashSet<>();
+    private static boolean sodiumAvailable = false;
+
+    static {
+        sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium");
+    }
+
+    public static boolean isSodiumAvailable() {
+        return sodiumAvailable;
+    }
 
     public static void initVoxyClient() {
         Capabilities.init();//Ensure clinit is called
@@ -40,6 +49,11 @@ public class VoxyClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        if (!sodiumAvailable) {
+            Logger.error("Sodium is not installed. Voxy requires Sodium to function on the client.");
+            return;
+        }
+
         // DebugScreenEntries.register(ResourceLocation.fromNamespaceAndPath("voxy","debug"), new VoxyDebugScreenEntry());
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             if (VoxyCommon.isAvailable()) {
