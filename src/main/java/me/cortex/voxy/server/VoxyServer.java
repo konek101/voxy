@@ -181,6 +181,9 @@ public class VoxyServer implements DedicatedServerModInitializer {
             return;
         }
 
+        // Mark the engine as active to prevent idle shutdown while processing
+        engine.markActive();
+
         // Set up the save callback to also sync to players
         engine.setSaveCallback((eng, section) -> {
             serverInstance.getSavingService().enqueueSave(eng, section);
