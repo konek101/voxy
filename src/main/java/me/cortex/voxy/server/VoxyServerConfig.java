@@ -25,9 +25,15 @@ public class VoxyServerConfig {
     public boolean generateLodsOnChunkGeneration = true;
     public boolean generateLodsOnChunkModification = true;
     public boolean syncLodsToPlayers = true;
+    public boolean acceptLodsFromClients = true;
     public int serviceThreads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
     public int syncPollTimeoutMs = 100;
     public int chunkModificationQueuePollingRateMs = 500;
+    
+    // Server load thresholds for offloading LOD generation to clients
+    public boolean offloadToClientsWhenBusy = true;
+    public int maxPendingLodsBeforeOffload = 1000;
+    public float serverTickMsThreshold = 45.0f; // offload if server tick takes longer than this
 
     private static VoxyServerConfig loadOrCreate() {
         var path = getConfigPath();

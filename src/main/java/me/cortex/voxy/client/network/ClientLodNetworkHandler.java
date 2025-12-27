@@ -1,5 +1,6 @@
 package me.cortex.voxy.client.network;
 
+import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.MemoryBuffer;
 import me.cortex.voxy.common.world.SaveLoadSystem3;
@@ -9,6 +10,7 @@ import me.cortex.voxy.commonImpl.WorldIdentifier;
 import me.cortex.voxy.server.network.LodSectionDataPacket;
 import me.cortex.voxy.server.network.LodSectionDeletePacket;
 import me.cortex.voxy.server.network.LodSectionRequestPacket;
+import me.cortex.voxy.server.network.LodSectionUploadPacket;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
@@ -185,5 +187,40 @@ public class ClientLodNetworkHandler {
         ClientPlayNetworking.send(LodSectionRequestPacket.ID, buf);
 
         Logger.info("Requested LOD data from server for world: " + identifier.getWorldId());
+    }
+    
+    /**
+     * Upload a locally generated LOD section to the server.
+     * Only uploads if uploadLodsToServer is enabled in client config and server accepts uploads.
+     */
+    public static void uploadLodSection(WorldSection section, WorldIdentifier worldId) {
+        if (!VoxyConfig.CONFIG.uploadLodsToServer) {
+            return; // Client not configured to upload LODs
+        }
+        
+        if (!ClientPlayNetworking.canSend(LodSectionUploadPacket.ID)) {
+            return; // Server doesn't support LOD uploads
+        }
+        
+        try {
+            var serializedData = SaveLoadSystem3.serialize(section);
+            byte[] data = new byte[(int) serializedData.size];
+            MemoryUtil.memByteBuffer(serializedData.address, (int) serializedData.size).get(data);
+            serializedData.free();
+            
+            var buf = PacketByteBufs.create();
+            new LodSectionUploadPacket(section.key, data, worldId.getWorldId()).write(buf);
+            ClientPlayNetworking.send(LodSectionUploadPacket.ID, buf);
+        } catch (Exception e) {
+            Logger.error("Error uploading LOD section to server", e);
+        }
+    }
+    
+    /**
+     * Check if the client should generate LODs locally.
+     * Returns false if the client is configured to rely on server LODs.
+     */
+    public static boolean shouldGenerateLods() {
+        return !VoxyConfig.CONFIG.useServerLods;
     }
 }

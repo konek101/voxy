@@ -26,6 +26,8 @@ public class VoxyConfig implements OptionStorage<VoxyConfig> {
     public boolean enabled = true;
     public boolean enableRendering = true;
     public boolean ingestEnabled = true;
+    public boolean useServerLods = false; // When true, client disables local LOD generation and relies on server
+    public boolean uploadLodsToServer = false; // When true, client uploads generated LODs to server
     public int sectionRenderDistance = 16;
     public int serviceThreads = (int) Math.max(Runtime.getRuntime().availableProcessors() * 2 / 1.5, 1);
     public float subDivisionSize = 64;

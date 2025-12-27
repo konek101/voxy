@@ -1,9 +1,12 @@
 package me.cortex.voxy.server;
 
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.util.MemoryBuffer;
+import me.cortex.voxy.common.world.SaveLoadSystem3;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
 import me.cortex.voxy.server.network.LodSectionRequestPacket;
+import me.cortex.voxy.server.network.LodSectionUploadPacket;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
@@ -13,12 +16,15 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import org.lwjgl.system.MemoryUtil;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class VoxyServer implements DedicatedServerModInitializer {
     private static VoxyServerInstance serverInstance;
+    private static MinecraftServer currentServer;
     
     // Queue of chunks that need LOD regeneration due to block modifications
     // Using ConcurrentHashMap as a set to deduplicate chunks that were modified multiple times
@@ -26,7 +32,42 @@ public class VoxyServer implements DedicatedServerModInitializer {
     private static volatile boolean chunkProcessorRunning = false;
     private static Thread chunkProcessorThread;
     
+    // Server load tracking
+    private static final AtomicLong lastTickTimeNanos = new AtomicLong(0);
+    private static volatile boolean serverBusy = false;
+    
     private record ChunkKey(ServerLevel level, int chunkX, int chunkZ) {}
+    
+    /**
+     * Check if the server is too busy to generate LODs locally.
+     * When busy, clients should be asked to generate and upload LODs instead.
+     */
+    public static boolean isServerBusy() {
+        if (!VoxyServerConfig.CONFIG.offloadToClientsWhenBusy) {
+            return false;
+        }
+        
+        // Check pending LOD count
+        if (serverInstance != null) {
+            var ingestService = serverInstance.getIngestService();
+            if (ingestService.getTaskCount() > VoxyServerConfig.CONFIG.maxPendingLodsBeforeOffload) {
+                return true;
+            }
+        }
+        
+        // Check server tick time
+        float tickTimeMs = lastTickTimeNanos.get() / 1_000_000.0f;
+        return tickTimeMs > VoxyServerConfig.CONFIG.serverTickMsThreshold;
+    }
+    
+    /**
+     * Update the server tick time for load tracking.
+     * Should be called from a mixin at the end of each server tick.
+     */
+    public static void updateTickTime(long tickTimeNanos) {
+        lastTickTimeNanos.set(tickTimeNanos);
+        serverBusy = isServerBusy();
+    }
 
     @Override
     public void onInitializeServer() {
@@ -66,12 +107,61 @@ public class VoxyServer implements DedicatedServerModInitializer {
                 }
             });
         });
+        
+        // Register handler for client LOD uploads
+        ServerPlayNetworking.registerGlobalReceiver(LodSectionUploadPacket.ID, (server, player, handler, buf, responseSender) -> {
+            if (!VoxyServerConfig.CONFIG.acceptLodsFromClients) {
+                return; // Server not accepting client LODs
+            }
+            
+            var packet = new LodSectionUploadPacket(buf);
+            server.execute(() -> handleClientLodUpload(packet));
+        });
 
         Logger.info("Voxy Server initialized");
+    }
+    
+    private static void handleClientLodUpload(LodSectionUploadPacket packet) {
+        if (serverInstance == null) return;
+        if (currentServer == null) return;
+        
+        // Find the matching world
+        for (var level : currentServer.getAllLevels()) {
+            var identifier = WorldIdentifier.of(level);
+            if (identifier == null || !identifier.getWorldId().equals(packet.worldId)) continue;
+            
+            var engine = serverInstance.getOrCreate(identifier);
+            if (engine == null) continue;
+            
+            try {
+                // Create a memory buffer from the compressed data
+                var data = new MemoryBuffer(packet.compressedData.length);
+                MemoryUtil.memByteBuffer(data.address, (int) data.size).put(packet.compressedData);
+                
+                var section = engine.acquire(packet.sectionKey);
+                if (section != null) {
+                    try {
+                        if (SaveLoadSystem3.deserialize(section, data)) {
+                            engine.markDirty(section);
+                            // Also sync to other players
+                            serverInstance.getSyncService().enqueueSectionUpdate(identifier, section);
+                        }
+                    } finally {
+                        section.release();
+                    }
+                }
+                data.free();
+            } catch (Exception e) {
+                Logger.error("Error handling client LOD upload", e);
+            }
+            break;
+        }
     }
 
     private void onServerStarting(MinecraftServer server) {
         Logger.info("Voxy Server starting");
+        
+        currentServer = server;
         
         // Set up the instance factory for server
         VoxyCommon.setInstanceFactory(() -> new VoxyServerInstance(server));
@@ -88,6 +178,7 @@ public class VoxyServer implements DedicatedServerModInitializer {
         stopChunkProcessor();
         VoxyCommon.shutdownInstance();
         serverInstance = null;
+        currentServer = null;
     }
     
     private static void startChunkProcessor() {
@@ -148,10 +239,18 @@ public class VoxyServer implements DedicatedServerModInitializer {
     /**
      * Called when a chunk is generated or modified on the server.
      * Generates LOD data for the chunk if enabled in config.
+     * When server is busy and offloading is enabled, skips local generation
+     * and waits for clients to upload LODs.
      */
     public static void onChunkGenerated(ServerLevel level, LevelChunk chunk) {
         if (serverInstance == null) return;
         if (!VoxyServerConfig.CONFIG.generateLodsOnChunkGeneration) return;
+        
+        // Skip if server is busy and offloading to clients is enabled
+        if (serverBusy && VoxyServerConfig.CONFIG.offloadToClientsWhenBusy) {
+            // Server is busy, let clients handle LOD generation
+            return;
+        }
 
         ingestChunk(level, chunk);
     }
@@ -159,10 +258,17 @@ public class VoxyServer implements DedicatedServerModInitializer {
     /**
      * Called when a chunk is modified on the server.
      * Queues the chunk for LOD regeneration to avoid lag from frequent block changes.
+     * When server is busy and offloading is enabled, skips local generation.
      */
     public static void onChunkModified(ServerLevel level, LevelChunk chunk) {
         if (serverInstance == null) return;
         if (!VoxyServerConfig.CONFIG.generateLodsOnChunkModification) return;
+        
+        // Skip if server is busy and offloading to clients is enabled
+        if (serverBusy && VoxyServerConfig.CONFIG.offloadToClientsWhenBusy) {
+            // Server is busy, let clients handle LOD generation
+            return;
+        }
 
         // Queue the chunk for processing instead of immediate processing
         pendingChunkModifications.put(new ChunkKey(level, chunk.getPos().x, chunk.getPos().z), Boolean.TRUE);
