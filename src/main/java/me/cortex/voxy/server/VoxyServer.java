@@ -124,11 +124,13 @@ public class VoxyServer implements DedicatedServerModInitializer {
     private static void processQueuedChunks() {
         if (serverInstance == null) return;
         
-        // Process all pending chunks
-        var keysToProcess = pendingChunkModifications.keySet().toArray(new ChunkKey[0]);
-        for (var key : keysToProcess) {
-            pendingChunkModifications.remove(key);
+        // Process all pending chunks using iterator to avoid race conditions
+        var iterator = pendingChunkModifications.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            iterator.remove();
             
+            var key = entry.getKey();
             var chunk = key.level.getChunkSource().getChunkNow(key.chunkX, key.chunkZ);
             if (chunk != null) {
                 ingestChunk(key.level, chunk);

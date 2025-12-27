@@ -20,6 +20,10 @@ import org.lwjgl.system.MemoryUtil;
  */
 public class ClientLodNetworkHandler {
     private static boolean initialized = false;
+    
+    // Constants for world readiness polling
+    private static final int WORLD_READY_MAX_ATTEMPTS = 100;
+    private static final int WORLD_READY_POLL_INTERVAL_MS = 100;
 
     public static void init() {
         if (initialized) return;
@@ -43,8 +47,7 @@ public class ClientLodNetworkHandler {
             new Thread(() -> {
                 try {
                     // Wait for the world to be ready by checking state instead of using a magic delay
-                    int maxAttempts = 100; // Up to ~10 seconds with 100ms intervals
-                    for (int i = 0; i < maxAttempts; i++) {
+                    for (int i = 0; i < WORLD_READY_MAX_ATTEMPTS; i++) {
                         var level = Minecraft.getInstance().level;
                         var identifier = level != null ? WorldIdentifier.of(level) : null;
                         var instance = VoxyCommon.getInstance();
@@ -55,7 +58,7 @@ public class ClientLodNetworkHandler {
                             return;
                         }
                         
-                        Thread.sleep(100);
+                        Thread.sleep(WORLD_READY_POLL_INTERVAL_MS);
                     }
                     Logger.warn("Timeout waiting for world to be ready for LOD request");
                 } catch (InterruptedException e) {
