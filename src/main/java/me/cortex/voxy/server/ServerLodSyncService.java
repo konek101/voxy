@@ -134,7 +134,7 @@ public class ServerLodSyncService {
         
         // Start sending existing LOD data to the player in a background thread
         final PlayerSyncState finalState = state;
-        this.instance.getThreadPool().serviceManager.execute(() -> sendExistingLodsToPlayer(finalState, packet.worldId));
+        new Thread(() -> sendExistingLodsToPlayer(finalState, packet.worldId), "Voxy-LOD-Sync-" + player.getName().getString()).start();
     }
 
     private void sendExistingLodsToPlayer(PlayerSyncState state, String worldId) {

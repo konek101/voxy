@@ -74,7 +74,7 @@ public class ClientLodNetworkHandler {
         // Deserialize and load the section
         try {
             // Create a memory buffer from the compressed data
-            var data = MemoryBuffer.allocate(packet.compressedData.length);
+            var data = new MemoryBuffer(packet.compressedData.length);
             MemoryUtil.memByteBuffer(data.address, (int) data.size).put(packet.compressedData);
             
             var section = engine.acquire(packet.sectionKey);
