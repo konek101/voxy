@@ -50,8 +50,8 @@ public class ServerLodSyncService {
     private void syncLoop() {
         while (this.running) {
             try {
-                // Use blocking poll with timeout to avoid busy waiting
-                SectionUpdate update = this.pendingUpdates.poll(100, TimeUnit.MILLISECONDS);
+                // Use blocking poll with configurable timeout to avoid busy waiting
+                SectionUpdate update = this.pendingUpdates.poll(VoxyServerConfig.CONFIG.syncPollTimeoutMs, TimeUnit.MILLISECONDS);
                 if (update != null) {
                     broadcastUpdate(update);
                 }

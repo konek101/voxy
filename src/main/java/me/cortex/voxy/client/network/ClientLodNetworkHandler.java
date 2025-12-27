@@ -36,15 +36,28 @@ public class ClientLodNetworkHandler {
             client.execute(() -> handleSectionDelete(packet));
         });
 
-        // When joining a server, request LOD data after a delay
+        // When joining a server, request LOD data when world is ready
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            // Schedule the request with a delay to ensure world info is ready
+            // Schedule the request with a check loop to ensure world info is ready
             // Using a separate thread to avoid blocking the render thread
             new Thread(() -> {
                 try {
-                    Thread.sleep(1000); // Wait for world to be ready
-                    // Execute on client thread
-                    client.execute(ClientLodNetworkHandler::requestLodData);
+                    // Wait for the world to be ready by checking state instead of using a magic delay
+                    int maxAttempts = 100; // Up to ~10 seconds with 100ms intervals
+                    for (int i = 0; i < maxAttempts; i++) {
+                        var level = Minecraft.getInstance().level;
+                        var identifier = level != null ? WorldIdentifier.of(level) : null;
+                        var instance = VoxyCommon.getInstance();
+                        
+                        if (level != null && identifier != null && instance != null) {
+                            // World is ready, execute on client thread
+                            client.execute(ClientLodNetworkHandler::requestLodData);
+                            return;
+                        }
+                        
+                        Thread.sleep(100);
+                    }
+                    Logger.warn("Timeout waiting for world to be ready for LOD request");
                 } catch (InterruptedException e) {
                     // Ignore - we're shutting down
                 }
@@ -56,20 +69,33 @@ public class ClientLodNetworkHandler {
 
     private static void handleSectionData(LodSectionDataPacket packet) {
         var instance = VoxyCommon.getInstance();
-        if (instance == null) return;
+        if (instance == null) {
+            Logger.warn("Cannot handle LOD section data: VoxyCommon instance is null");
+            return;
+        }
 
         // Find the world engine for this world
         var level = Minecraft.getInstance().level;
-        if (level == null) return;
+        if (level == null) {
+            Logger.warn("Cannot handle LOD section data: client level is null");
+            return;
+        }
 
         var identifier = WorldIdentifier.of(level);
-        if (identifier == null || !identifier.getWorldId().equals(packet.worldId)) {
-            // Try to find by world ID if current world doesn't match
+        if (identifier == null) {
+            Logger.warn("Cannot handle LOD section data: world identifier is null");
+            return;
+        }
+        if (!identifier.getWorldId().equals(packet.worldId)) {
+            // World ID mismatch - not an error, just a different world
             return;
         }
 
         var engine = instance.getOrCreate(identifier);
-        if (engine == null) return;
+        if (engine == null) {
+            Logger.warn("Cannot handle LOD section data: failed to get or create world engine");
+            return;
+        }
 
         // Deserialize and load the section
         try {
@@ -95,18 +121,32 @@ public class ClientLodNetworkHandler {
 
     private static void handleSectionDelete(LodSectionDeletePacket packet) {
         var instance = VoxyCommon.getInstance();
-        if (instance == null) return;
+        if (instance == null) {
+            Logger.warn("Cannot handle LOD section delete: VoxyCommon instance is null");
+            return;
+        }
 
         var level = Minecraft.getInstance().level;
-        if (level == null) return;
+        if (level == null) {
+            Logger.warn("Cannot handle LOD section delete: client level is null");
+            return;
+        }
 
         var identifier = WorldIdentifier.of(level);
-        if (identifier == null || !identifier.getWorldId().equals(packet.worldId)) {
+        if (identifier == null) {
+            Logger.warn("Cannot handle LOD section delete: world identifier is null");
+            return;
+        }
+        if (!identifier.getWorldId().equals(packet.worldId)) {
+            // World ID mismatch - not an error, just a different world
             return;
         }
 
         var engine = instance.getNullable(identifier);
-        if (engine == null) return;
+        if (engine == null) {
+            // Engine not created yet - not an error during initial sync
+            return;
+        }
 
         // Delete the section from storage
         try {
@@ -121,13 +161,19 @@ public class ClientLodNetworkHandler {
      */
     public static void requestLodData() {
         var level = Minecraft.getInstance().level;
-        if (level == null) return;
+        if (level == null) {
+            Logger.warn("Cannot request LOD data: client level is null");
+            return;
+        }
 
         var identifier = WorldIdentifier.of(level);
-        if (identifier == null) return;
+        if (identifier == null) {
+            Logger.warn("Cannot request LOD data: world identifier is null");
+            return;
+        }
 
         if (!ClientPlayNetworking.canSend(LodSectionRequestPacket.ID)) {
-            // Server doesn't support LOD sync
+            // Server doesn't support LOD sync - not an error
             return;
         }
 

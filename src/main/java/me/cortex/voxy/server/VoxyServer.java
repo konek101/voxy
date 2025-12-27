@@ -11,10 +11,22 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class VoxyServer implements DedicatedServerModInitializer {
     private static VoxyServerInstance serverInstance;
+    
+    // Queue of chunks that need LOD regeneration due to block modifications
+    // Using ConcurrentHashMap as a set to deduplicate chunks that were modified multiple times
+    private static final ConcurrentHashMap<ChunkKey, Boolean> pendingChunkModifications = new ConcurrentHashMap<>();
+    private static volatile boolean chunkProcessorRunning = false;
+    private static Thread chunkProcessorThread;
+    
+    private record ChunkKey(ServerLevel level, int chunkX, int chunkZ) {}
 
     @Override
     public void onInitializeServer() {
@@ -66,12 +78,62 @@ public class VoxyServer implements DedicatedServerModInitializer {
         VoxyCommon.createInstance();
         
         serverInstance = (VoxyServerInstance) VoxyCommon.getInstance();
+        
+        // Start chunk modification processor thread
+        startChunkProcessor();
     }
 
     private void onServerStopped(MinecraftServer server) {
         Logger.info("Voxy Server stopping");
+        stopChunkProcessor();
         VoxyCommon.shutdownInstance();
         serverInstance = null;
+    }
+    
+    private static void startChunkProcessor() {
+        chunkProcessorRunning = true;
+        chunkProcessorThread = new Thread(() -> {
+            while (chunkProcessorRunning) {
+                try {
+                    Thread.sleep(VoxyServerConfig.CONFIG.chunkModificationQueuePollingRateMs);
+                    processQueuedChunks();
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    Logger.error("Error in chunk processor thread", e);
+                }
+            }
+        }, "Voxy-Chunk-Processor");
+        chunkProcessorThread.setDaemon(true);
+        chunkProcessorThread.start();
+    }
+    
+    private static void stopChunkProcessor() {
+        chunkProcessorRunning = false;
+        if (chunkProcessorThread != null) {
+            chunkProcessorThread.interrupt();
+            try {
+                chunkProcessorThread.join(5000);
+            } catch (InterruptedException e) {
+                Logger.error("Interrupted while waiting for chunk processor to stop");
+            }
+        }
+        pendingChunkModifications.clear();
+    }
+    
+    private static void processQueuedChunks() {
+        if (serverInstance == null) return;
+        
+        // Process all pending chunks
+        var keysToProcess = pendingChunkModifications.keySet().toArray(new ChunkKey[0]);
+        for (var key : keysToProcess) {
+            pendingChunkModifications.remove(key);
+            
+            var chunk = key.level.getChunkSource().getChunkNow(key.chunkX, key.chunkZ);
+            if (chunk != null) {
+                ingestChunk(key.level, chunk);
+            }
+        }
     }
 
     /**
@@ -94,20 +156,28 @@ public class VoxyServer implements DedicatedServerModInitializer {
 
     /**
      * Called when a chunk is modified on the server.
+     * Queues the chunk for LOD regeneration to avoid lag from frequent block changes.
      */
     public static void onChunkModified(ServerLevel level, LevelChunk chunk) {
         if (serverInstance == null) return;
         if (!VoxyServerConfig.CONFIG.generateLodsOnChunkModification) return;
 
-        ingestChunk(level, chunk);
+        // Queue the chunk for processing instead of immediate processing
+        pendingChunkModifications.put(new ChunkKey(level, chunk.getPos().x, chunk.getPos().z), Boolean.TRUE);
     }
 
     private static void ingestChunk(ServerLevel level, LevelChunk chunk) {
         var worldId = WorldIdentifier.of(level);
-        if (worldId == null) return;
+        if (worldId == null) {
+            Logger.warn("Cannot ingest chunk: world identifier is null");
+            return;
+        }
 
         var engine = serverInstance.getOrCreate(worldId);
-        if (engine == null) return;
+        if (engine == null) {
+            Logger.warn("Cannot ingest chunk: failed to get or create world engine");
+            return;
+        }
 
         // Set up the save callback to also sync to players
         engine.setSaveCallback((eng, section) -> {

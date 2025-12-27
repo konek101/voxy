@@ -26,6 +26,8 @@ public class VoxyServerConfig {
     public boolean generateLodsOnChunkModification = true;
     public boolean syncLodsToPlayers = true;
     public int serviceThreads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
+    public int syncPollTimeoutMs = 100;
+    public int chunkModificationQueuePollingRateMs = 500;
 
     private static VoxyServerConfig loadOrCreate() {
         var path = getConfigPath();
