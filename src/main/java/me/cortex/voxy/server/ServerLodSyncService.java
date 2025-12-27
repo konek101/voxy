@@ -122,6 +122,7 @@ public class ServerLodSyncService {
      * Handle a request from a client to receive LOD data for a specific world.
      */
     public void handleLodRequest(ServerPlayer player, LodSectionRequestPacket packet) {
+        if (!this.running) return;
         if (!VoxyServerConfig.CONFIG.syncLodsToPlayers) return;
         
         var state = this.playerStates.get(player);
@@ -134,11 +135,14 @@ public class ServerLodSyncService {
         
         // Start sending existing LOD data to the player in a background thread
         final PlayerSyncState finalState = state;
-        new Thread(() -> sendExistingLodsToPlayer(finalState, packet.worldId), "Voxy-LOD-Sync-" + player.getName().getString()).start();
+        Thread syncThread = new Thread(() -> sendExistingLodsToPlayer(finalState, packet.worldId), "Voxy-LOD-Sync-" + player.getName().getString());
+        syncThread.setDaemon(true);
+        syncThread.start();
     }
 
     private void sendExistingLodsToPlayer(PlayerSyncState state, String worldId) {
         var player = state.player;
+        if (!this.running) return;
         if (!player.isAlive() || player.hasDisconnected()) return;
         if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) return;
 
@@ -148,6 +152,8 @@ public class ServerLodSyncService {
         if (server == null) return;
 
         for (var level : server.getAllLevels()) {
+            if (!this.running) break;
+            
             var identifier = WorldIdentifier.of(level);
             if (identifier == null || !identifier.getWorldId().equals(worldId)) continue;
 
@@ -156,7 +162,8 @@ public class ServerLodSyncService {
 
             // Iterate through all stored sections and send them
             engine.storage.iterateStoredSectionPositions(sectionKey -> {
-                // Early exit if player is no longer valid
+                // Early exit if shutdown is requested or player is no longer valid
+                if (!this.running) return;
                 if (!player.isAlive() || player.hasDisconnected()) return;
 
                 try {
