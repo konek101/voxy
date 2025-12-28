@@ -35,6 +35,8 @@ public class ServerLodSyncService {
     private static class PlayerSyncState {
         final ServerPlayer player;
         volatile boolean initialSyncComplete = false;
+        volatile int lastSyncedBlockStateCount = 0;
+        volatile int lastSyncedBiomeCount = 0;
         
         PlayerSyncState(ServerPlayer player) {
             this.player = player;
@@ -70,13 +72,37 @@ public class ServerLodSyncService {
         
         var server = this.instance.getServer();
         if (server == null) return;
+        
+        // Get the world engine to check mapper state
+        var engine = this.instance.getNullable(update.worldId);
 
         for (ServerPlayer player : PlayerLookup.all(server)) {
             if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) {
                 continue; // Player doesn't have the mod installed
             }
             
+            // Only send to players who have synced (have a state) or skip if no state
+            var state = this.playerStates.get(player);
+            if (state == null) {
+                continue; // Player hasn't requested LOD sync yet
+            }
+            
             try {
+                // Check if we need to send a mapper sync before sending section data
+                if (engine != null && !update.isDelete) {
+                    var mapper = engine.getMapper();
+                    int currentBlockCount = mapper.getBlockStateCount();
+                    int currentBiomeCount = mapper.getBiomeEntries().length;
+                    
+                    if (currentBlockCount > state.lastSyncedBlockStateCount || 
+                        currentBiomeCount > state.lastSyncedBiomeCount) {
+                        // Mapper has new entries, resync before sending section
+                        sendMapperSync(player, engine, update.worldId.getWorldId());
+                        state.lastSyncedBlockStateCount = currentBlockCount;
+                        state.lastSyncedBiomeCount = currentBiomeCount;
+                    }
+                }
+                
                 if (update.isDelete) {
                     sendDeletePacket(player, update.sectionKey, update.worldId.getWorldId());
                 } else {
@@ -163,6 +189,11 @@ public class ServerLodSyncService {
             
             // Send mapper sync FIRST so client can translate block state IDs
             sendMapperSync(player, engine, worldId);
+            
+            // Track the synced mapper state
+            var mapper = engine.getMapper();
+            state.lastSyncedBlockStateCount = mapper.getBlockStateCount();
+            state.lastSyncedBiomeCount = mapper.getBiomeEntries().length;
 
             // Iterate through all stored sections and send them
             engine.storage.iterateStoredSectionPositions(sectionKey -> {
@@ -171,6 +202,16 @@ public class ServerLodSyncService {
                 if (!player.isAlive() || player.hasDisconnected()) return;
 
                 try {
+                    // Check if mapper has grown during sync, and resync if needed
+                    int currentBlockCount = mapper.getBlockStateCount();
+                    int currentBiomeCount = mapper.getBiomeEntries().length;
+                    if (currentBlockCount > state.lastSyncedBlockStateCount || 
+                        currentBiomeCount > state.lastSyncedBiomeCount) {
+                        sendMapperSync(player, engine, worldId);
+                        state.lastSyncedBlockStateCount = currentBlockCount;
+                        state.lastSyncedBiomeCount = currentBiomeCount;
+                    }
+                    
                     var section = engine.acquireIfExists(sectionKey);
                     if (section != null) {
                         try {
