@@ -138,9 +138,6 @@ public class MapperTranslator {
         int lutSize = (int) (metadata & 0xFFFF);
         long lutBasePtr = ptr + WorldSection.SECTION_VOLUME * 2;
         
-        // Get the current client Mapper size for bounds validation
-        int maxClientBlockId = clientMapper.getBlockStateCount();
-        
         // Translate each LUT entry
         for (int i = 0; i < lutSize; i++) {
             long lutPtr = lutBasePtr + i * 8L;
@@ -152,8 +149,11 @@ public class MapperTranslator {
             
             int clientBlockId = blockTranslation.getOrDefault(serverBlockId, -1);
             
-            // Validate the client block ID is within bounds
-            if (clientBlockId == -1 || clientBlockId >= maxClientBlockId) {
+            // Always validate the client block ID is within current bounds
+            // The Mapper state may have changed since the translation table was built
+            int currentMaxBlockId = clientMapper.getBlockStateCount();
+            
+            if (clientBlockId == -1 || clientBlockId >= currentMaxBlockId) {
                 // Translation doesn't exist or is out of bounds - try to resolve via the stored BlockState
                 var blockStateData = serverBlockStateData.get(worldId);
                 if (blockStateData != null && serverBlockId < blockStateData.size()) {
@@ -163,21 +163,30 @@ public class MapperTranslator {
                             boolean[] dummy = new boolean[1];
                             var serverEntry = Mapper.StateEntry.deserialize(serverBlockId, stateBytes, dummy);
                             // Get or create the client ID for this BlockState
+                            // This will return an existing ID or create a new one
                             clientBlockId = clientMapper.getIdForBlockState(serverEntry.state);
                             // Update the translation table for future use
                             blockTranslation.put(serverBlockId, clientBlockId);
-                            // Update the max count
-                            maxClientBlockId = Math.max(maxClientBlockId, clientMapper.getBlockStateCount());
                         } catch (Exception e) {
                             Logger.error("Failed to resolve block state " + serverBlockId + " during translation", e);
                             clientBlockId = 0; // Map to air
                         }
                     } else {
+                        Logger.warn("No state data for server block ID " + serverBlockId + ", mapping to air");
                         clientBlockId = 0; // Map unknown to air
                     }
                 } else {
+                    Logger.warn("Server block ID " + serverBlockId + " out of range for stored state data (size: " + 
+                        (serverBlockStateData.get(worldId) != null ? serverBlockStateData.get(worldId).size() : 0) + "), mapping to air");
                     clientBlockId = 0; // Map unknown to air
                 }
+            }
+            
+            // Final validation - if we still have an invalid ID, use air
+            if (clientBlockId < 0 || clientBlockId >= clientMapper.getBlockStateCount()) {
+                Logger.warn("Client block ID " + clientBlockId + " still out of bounds after resolution (max: " + 
+                    clientMapper.getBlockStateCount() + "), mapping to air");
+                clientBlockId = 0;
             }
             
             long newId = Mapper.composeMappingId((byte) light, clientBlockId, serverBiomeId);
