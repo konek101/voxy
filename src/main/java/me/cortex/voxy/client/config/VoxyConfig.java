@@ -26,6 +26,11 @@ public class VoxyConfig implements OptionStorage<VoxyConfig> {
     public boolean enabled = true;
     public boolean enableRendering = true;
     public boolean ingestEnabled = true;
+    // When true, client uses LODs from the server (via mapper-sync translation).
+    // The client still generates LODs locally, but will receive and use server-generated LODs.
+    public boolean useServerLods = false; // When true, client disables local LOD generation and relies on server
+    // When true, client uploads locally generated LODs to the server for other players to use.
+    public boolean uploadLodsToServer = false;
     public int sectionRenderDistance = 16;
     public int serviceThreads = (int) Math.max(Runtime.getRuntime().availableProcessors() * 2 / 1.5, 1);
     public float subDivisionSize = 64;

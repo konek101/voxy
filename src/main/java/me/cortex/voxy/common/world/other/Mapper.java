@@ -7,8 +7,8 @@ import me.cortex.voxy.common.config.IMappingStorage;
 import me.cortex.voxy.common.util.Pair;
 import me.cortex.voxy.common.world.other.Mapper.BiomeEntry;
 import me.cortex.voxy.common.world.other.Mapper.StateEntry;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.minecraft.SharedConstants;
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.nbt.CompoundTag;
@@ -358,7 +358,9 @@ public class Mapper {
             if (state.getBlock() instanceof LeavesBlock) {
                 this.opacity = 15;
             } else {
-                this.opacity = state.getLightBlock(Minecraft.getInstance().level, new BlockPos(0,0,0));
+                // Use EmptyBlockGetter to avoid client-only Minecraft.getInstance() dependency
+                // This works for most blocks and allows server-side usage
+                this.opacity = state.getLightBlock(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
             }
         }
 

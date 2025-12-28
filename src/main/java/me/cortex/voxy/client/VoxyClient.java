@@ -3,6 +3,7 @@ package me.cortex.voxy.client;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.model.bakery.BudgetBufferRenderer;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
+import me.cortex.voxy.client.network.ClientLodNetworkHandler;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.fabricmc.api.ClientModInitializer;
@@ -16,6 +17,18 @@ import java.util.function.Function;
 
 public class VoxyClient implements ClientModInitializer {
     private static final HashSet<String> FREX = new HashSet<>();
+    private static Boolean sodiumAvailable = null;
+
+    public static boolean isSodiumAvailable() {
+        if (sodiumAvailable == null) {
+            // Check for both original Sodium and forks like Embeddium/Rubidium
+            sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium") ||
+                             FabricLoader.getInstance().isModLoaded("embeddium") ||
+                             FabricLoader.getInstance().isModLoaded("rubidium");
+            Logger.info("Sodium/Embeddium/Rubidium check: " + sodiumAvailable);
+        }
+        return sodiumAvailable;
+    }
 
     public static void initVoxyClient() {
         Capabilities.init();//Ensure clinit is called
@@ -39,6 +52,11 @@ public class VoxyClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        if (!isSodiumAvailable()) {
+            Logger.error("Sodium is not installed. Voxy requires Sodium to function on the client. Please install Sodium to use Voxy client features. Server-side LOD sync will continue to work.");
+            return;
+        }
+
         // DebugScreenEntries.register(ResourceLocation.fromNamespaceAndPath("voxy","debug"), new VoxyDebugScreenEntry());
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             if (VoxyCommon.isAvailable()) {
@@ -53,6 +71,9 @@ public class VoxyClient implements ClientModInitializer {
                 } else {
                     FREX.remove(name);
                 }}));
+
+        // Initialize client network handler for receiving LOD data from server
+        ClientLodNetworkHandler.init();
     }
 
     public static boolean isFrexActive() {

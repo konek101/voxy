@@ -20,6 +20,9 @@
     "client": [
       "me.cortex.voxy.client.VoxyClient"
     ],
+    "server": [
+      "me.cortex.voxy.server.VoxyServer"
+    ],
     "modmenu": [
       "me.cortex.voxy.client.config.ModMenuIntegration"
     ],
@@ -32,12 +35,18 @@
       "config": "client.voxy.mixins.json",
       "environment": "client"
     },
+    {
+      "config": "server.voxy.mixins.json",
+      "environment": "server"
+    },
     "common.voxy.mixins.json"
   ],
   "depends": {
     "minecraft": ["1.20.1"],
     "fabricloader": ">=0.14.22",
-    "fabric-api": ">=0.91.1",
+    "fabric-api": ">=0.91.1"
+  },
+  "suggests": {
     "sodium": ">=0.5.13"
   },
   "accessWidener": "voxy.accesswidener"

@@ -52,6 +52,11 @@ public class SectionSerializationStorage extends SectionStorage {
     }
 
     @Override
+    public void deleteSectionData(long key) {
+        this.backend.deleteSectionData(key);
+    }
+
+    @Override
     public void putIdMapping(int id, ByteBuffer data) {
         this.backend.putIdMapping(id, data);
     }
