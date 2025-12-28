@@ -43,10 +43,14 @@ public class MapperTranslator {
         }
         
         var clientMapper = engine.getMapper();
+        int clientMapperSizeBefore = clientMapper.getBlockStateCount();
         
         // Store the serialized block state data for later resolution
         List<byte[]> blockStateDataList = new ArrayList<>(packet.blockStateMappings);
         serverBlockStateData.put(packet.worldId, blockStateDataList);
+        
+        Logger.info("Processing mapper sync: server has " + packet.blockStateMappings.size() + 
+                   " block states, client mapper has " + clientMapperSizeBefore + " entries before sync");
         
         // Build block state translation table
         var blockTranslation = new Int2IntOpenHashMap(packet.blockStateMappings.size());
@@ -96,8 +100,10 @@ public class MapperTranslator {
         blockIdTranslations.put(packet.worldId, blockTranslation);
         biomeIdTranslations.put(packet.worldId, biomeTranslation);
         
+        int clientMapperSizeAfter = clientMapper.getBlockStateCount();
         Logger.info("Processed mapper sync for world " + packet.worldId + 
-                   ": " + blockTranslation.size() + " block states, " + biomeTranslation.size() + " biomes");
+                   ": " + blockTranslation.size() + " block states, " + biomeTranslation.size() + " biomes. " +
+                   "Client mapper: " + clientMapperSizeBefore + " -> " + clientMapperSizeAfter + " entries");
     }
     
     /**
@@ -123,6 +129,10 @@ public class MapperTranslator {
             Logger.warn("No block translation table for world " + worldId);
             return false;
         }
+        
+        // Log mapper identity for debugging
+        Logger.info("translateSectionData using mapper@" + System.identityHashCode(clientMapper) + 
+            " with " + clientMapper.getBlockStateCount() + " entries");
         
         // The data format is:
         // 8 bytes: section key
