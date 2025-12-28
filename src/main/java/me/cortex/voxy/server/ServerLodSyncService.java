@@ -78,7 +78,10 @@ public class ServerLodSyncService {
         // Get the world engine to check mapper state
         var engine = this.instance.getNullable(update.worldId);
 
-        for (ServerPlayer player : PlayerLookup.all(server)) {
+        var allPlayers = PlayerLookup.all(server);
+        int sentCount = 0;
+        
+        for (ServerPlayer player : allPlayers) {
             if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) {
                 continue; // Player doesn't have the mod installed
             }
@@ -116,9 +119,14 @@ public class ServerLodSyncService {
                 } else {
                     sendDataPacket(player, update.sectionKey, update.data, update.worldId.getWorldId());
                 }
+                sentCount++;
             } catch (Exception e) {
                 Logger.error("Failed to send LOD update to player " + player.getName().getString(), e);
             }
+        }
+        
+        if (allPlayers.size() > 0 && sentCount == 0) {
+            Logger.warn("Broadcast update to 0/" + allPlayers.size() + " players (no active sync states). Section: " + update.sectionKey);
         }
     }
 
@@ -283,6 +291,7 @@ public class ServerLodSyncService {
             serializedData.free();
             
             this.pendingUpdates.add(new SectionUpdate(worldId, section.key, data, false, maxBlockId));
+            Logger.info("Enqueued section update for world " + worldId.getWorldId() + " section " + section.key + " (pending: " + this.pendingUpdates.size() + ", players: " + this.playerStates.size() + ")");
         } catch (Exception e) {
             Logger.error("Error serializing section for sync", e);
         }

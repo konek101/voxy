@@ -56,10 +56,14 @@ public class ClientLodNetworkHandler {
 
         // When joining a server, request LOD data when world is ready
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            Logger.info("Client JOIN event received, starting world readiness check thread");
+            
             // Schedule the request with a check loop to ensure world info is ready
             // Using a separate thread to avoid blocking the render thread
             new Thread(() -> {
                 try {
+                    Logger.info("World readiness check thread started");
+                    
                     // Wait for the world to be ready by checking state instead of using a magic delay
                     for (int i = 0; i < WORLD_READY_MAX_ATTEMPTS; i++) {
                         var level = Minecraft.getInstance().level;
@@ -68,15 +72,24 @@ public class ClientLodNetworkHandler {
                         
                         if (level != null && identifier != null && instance != null) {
                             // World is ready, execute on client thread
+                            Logger.info("World is ready after " + i + " attempts. Level=" + level + ", Identifier=" + identifier.getWorldId() + ", Instance=" + instance);
                             client.execute(ClientLodNetworkHandler::requestLodData);
                             return;
                         }
                         
+                        if (i % 10 == 0) {
+                            Logger.info("Waiting for world... attempt " + i + "/" + WORLD_READY_MAX_ATTEMPTS + 
+                                       " level=" + (level != null) + " identifier=" + (identifier != null) + " instance=" + (instance != null));
+                        }
+                        
                         Thread.sleep(WORLD_READY_POLL_INTERVAL_MS);
                     }
-                    Logger.warn("Timeout waiting for world to be ready for LOD request");
+                    Logger.warn("Timeout waiting for world to be ready for LOD request after " + WORLD_READY_MAX_ATTEMPTS + " attempts");
                 } catch (InterruptedException e) {
                     // Ignore - we're shutting down
+                    Logger.info("World readiness check thread interrupted");
+                } catch (Exception e) {
+                    Logger.error("Error in world readiness check thread", e);
                 }
             }, "Voxy-LOD-Request-Delay").start();
         });
@@ -237,16 +250,26 @@ public class ClientLodNetworkHandler {
             return;
         }
 
-        if (!ClientPlayNetworking.canSend(LodSectionRequestPacket.ID)) {
-            // Server doesn't support LOD sync - not an error
-            return;
+        // Note: With Sinytra Connector or modded environments, canSend() might not work correctly.
+        // We try to send anyway and let the packet handler deal with errors.
+        boolean canSend = false;
+        try {
+            canSend = ClientPlayNetworking.canSend(LodSectionRequestPacket.ID);
+        } catch (Exception e) {
+            Logger.warn("Error checking if server supports LOD sync: " + e.getMessage());
         }
-
-        var buf = PacketByteBufs.create();
-        new LodSectionRequestPacket(identifier.getWorldId()).write(buf);
-        ClientPlayNetworking.send(LodSectionRequestPacket.ID, buf);
-
-        Logger.info("Requested LOD data from server for world: " + identifier.getWorldId());
+        
+        Logger.info("Requesting LOD data from server: canSend=" + canSend + " for world " + identifier.getWorldId());
+        
+        // Always try to send - if server doesn't support it, the packet will just be ignored
+        try {
+            var buf = PacketByteBufs.create();
+            new LodSectionRequestPacket(identifier.getWorldId()).write(buf);
+            ClientPlayNetworking.send(LodSectionRequestPacket.ID, buf);
+            Logger.info("Sent LOD request to server for world: " + identifier.getWorldId());
+        } catch (Exception e) {
+            Logger.warn("Failed to send LOD request to server (server may not support LOD sync): " + e.getMessage());
+        }
     }
     
     /**

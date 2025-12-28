@@ -100,10 +100,13 @@ public class VoxyServer implements DedicatedServerModInitializer {
 
         // Register packet handlers for C2S packets
         ServerPlayNetworking.registerGlobalReceiver(LodSectionRequestPacket.ID, (server, player, handler, buf, responseSender) -> {
+            Logger.info("Received LOD request packet from player " + player.getName().getString());
             var packet = new LodSectionRequestPacket(buf);
             server.execute(() -> {
                 if (serverInstance != null) {
                     serverInstance.getSyncService().handleLodRequest(player, packet);
+                } else {
+                    Logger.warn("Cannot handle LOD request: serverInstance is null");
                 }
             });
         });

@@ -21,7 +21,11 @@ public class VoxyClient implements ClientModInitializer {
 
     public static boolean isSodiumAvailable() {
         if (sodiumAvailable == null) {
-            sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium");
+            // Check for both original Sodium and forks like Embeddium/Rubidium
+            sodiumAvailable = FabricLoader.getInstance().isModLoaded("sodium") ||
+                             FabricLoader.getInstance().isModLoaded("embeddium") ||
+                             FabricLoader.getInstance().isModLoaded("rubidium");
+            Logger.info("Sodium/Embeddium/Rubidium check: " + sodiumAvailable);
         }
         return sodiumAvailable;
     }
