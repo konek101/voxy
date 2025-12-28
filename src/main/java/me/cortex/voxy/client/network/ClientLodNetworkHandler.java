@@ -98,6 +98,8 @@ public class ClientLodNetworkHandler {
     }
 
     private static void handleSectionData(LodSectionDataPacket packet) {
+        Logger.info("Received LOD section data packet: sectionKey=" + packet.sectionKey + ", worldId=" + packet.worldId + ", dataSize=" + packet.compressedData.length);
+        
         var instance = VoxyCommon.getInstance();
         if (instance == null) {
             Logger.warn("Cannot handle LOD section data: VoxyCommon instance is null");
@@ -164,6 +166,8 @@ public class ClientLodNetworkHandler {
     }
     
     private static void handleMapperSync(MapperSyncPacket packet) {
+        Logger.info("Received MapperSync packet: worldId=" + packet.worldId + ", blockStates=" + packet.blockStateMappings.size() + ", biomes=" + packet.biomeMappings.size());
+        
         var instance = VoxyCommon.getInstance();
         if (instance == null) {
             Logger.warn("Cannot handle mapper sync: VoxyCommon instance is null");

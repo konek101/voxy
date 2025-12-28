@@ -185,23 +185,45 @@ public class ServerLodSyncService {
 
     private void sendExistingLodsToPlayer(PlayerSyncState state, String worldId) {
         var player = state.player;
-        if (!this.running) return;
-        if (!player.isAlive() || player.hasDisconnected()) return;
-        if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) return;
+        Logger.info("sendExistingLodsToPlayer called for " + player.getName().getString() + ", worldId=" + worldId);
+        
+        if (!this.running) {
+            Logger.info("Not running, aborting initial sync");
+            return;
+        }
+        if (!player.isAlive() || player.hasDisconnected()) {
+            Logger.info("Player not alive or disconnected, aborting initial sync");
+            return;
+        }
+        if (!ServerPlayNetworking.canSend(player, LodSectionDataPacket.ID)) {
+            Logger.info("Cannot send to player (mod not installed?), aborting initial sync");
+            return;
+        }
 
         // Find the world engine for this world ID
         // We iterate through server levels to find matching world
         var server = this.instance.getServer();
-        if (server == null) return;
+        if (server == null) {
+            Logger.info("Server is null, aborting initial sync");
+            return;
+        }
 
+        boolean foundWorld = false;
         for (var level : server.getAllLevels()) {
             if (!this.running) break;
             
             var identifier = WorldIdentifier.of(level);
+            Logger.info("Checking level " + level.dimension().location() + " identifier=" + (identifier != null ? identifier.getWorldId() : "null"));
             if (identifier == null || !identifier.getWorldId().equals(worldId)) continue;
 
             var engine = this.instance.getNullable(identifier);
-            if (engine == null) continue;
+            if (engine == null) {
+                Logger.info("Engine not found for world " + worldId + ", skipping");
+                continue;
+            }
+            
+            foundWorld = true;
+            Logger.info("Found world engine for " + worldId + ", starting sync");
             
             // Send mapper sync FIRST so client can translate block state IDs
             sendMapperSync(player, engine, worldId);
@@ -212,6 +234,8 @@ public class ServerLodSyncService {
             state.lastSyncedBiomeCount = mapper.getBiomeEntries().length;
 
             // Iterate through all stored sections and send them
+            Logger.info("Starting initial sync for player " + player.getName().getString() + ", scanning storage for sections...");
+            final int[] sectionCount = {0};
             engine.storage.iterateStoredSectionPositions(sectionKey -> {
                 // Early exit if shutdown is requested or player is no longer valid
                 if (!this.running) return;
@@ -237,6 +261,11 @@ public class ServerLodSyncService {
                             serializedData.free();
                             
                             sendDataPacket(player, sectionKey, data, worldId);
+                            sectionCount[0]++;
+                            
+                            if (sectionCount[0] % 100 == 0) {
+                                Logger.info("Sent " + sectionCount[0] + " sections to " + player.getName().getString());
+                            }
                         } finally {
                             section.release();
                         }
@@ -245,9 +274,14 @@ public class ServerLodSyncService {
                     Logger.error("Error sending LOD section to player", e);
                 }
             });
+            Logger.info("Finished iterating storage for " + player.getName().getString() + ", sent " + sectionCount[0] + " sections");
             break;
         }
 
+        if (!foundWorld) {
+            Logger.warn("No matching world engine found for worldId=" + worldId + " - no sections sent");
+        }
+        
         state.initialSyncComplete = true;
         Logger.info("Completed initial LOD sync for player " + player.getName().getString());
     }
