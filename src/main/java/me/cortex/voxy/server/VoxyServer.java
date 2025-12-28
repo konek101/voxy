@@ -245,6 +245,9 @@ public class VoxyServer implements DedicatedServerModInitializer {
      * Generates LOD data for the chunk if enabled in config.
      * When server is busy and offloading is enabled, skips local generation
      * and waits for clients to upload LODs.
+     * 
+     * NOTE: Chunk ingestion is deferred to avoid querying the lighting engine
+     * synchronously during chunk load, which can cause ArrayIndexOutOfBoundsException.
      */
     public static void onChunkGenerated(ServerLevel level, LevelChunk chunk) {
         if (serverInstance == null) return;
@@ -256,7 +259,9 @@ public class VoxyServer implements DedicatedServerModInitializer {
             return;
         }
 
-        ingestChunk(level, chunk);
+        // Queue the chunk for processing instead of immediate processing
+        // This defers the lighting engine access to after chunk is fully loaded
+        pendingChunkModifications.put(new ChunkKey(level, chunk.getPos().x, chunk.getPos().z), Boolean.TRUE);
     }
 
     /**
