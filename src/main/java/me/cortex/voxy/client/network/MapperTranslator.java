@@ -138,6 +138,11 @@ public class MapperTranslator {
         int lutSize = (int) (metadata & 0xFFFF);
         long lutBasePtr = ptr + WorldSection.SECTION_VOLUME * 2;
         
+        // Get the block state data list for this world (for resolving unknown server IDs)
+        var blockStateData = serverBlockStateData.get(worldId);
+        int blockStateDataSize = blockStateData != null ? blockStateData.size() : 0;
+        int translationTableSize = blockTranslation.size();
+        
         // Translate each LUT entry
         for (int i = 0; i < lutSize; i++) {
             long lutPtr = lutBasePtr + i * 8L;
@@ -147,23 +152,22 @@ public class MapperTranslator {
             int serverBiomeId = Mapper.getBiomeId(oldId);
             int light = Mapper.getLightId(oldId);
             
+            // Skip air blocks - they don't need translation
+            if (serverBlockId == 0) {
+                continue;
+            }
+            
             int clientBlockId = blockTranslation.getOrDefault(serverBlockId, -1);
             
-            // Always validate the client block ID is within current bounds
-            // The Mapper state may have changed since the translation table was built
-            int currentMaxBlockId = clientMapper.getBlockStateCount();
-            
-            if (clientBlockId == -1 || clientBlockId >= currentMaxBlockId) {
-                // Translation doesn't exist or is out of bounds - try to resolve via the stored BlockState
-                var blockStateData = serverBlockStateData.get(worldId);
-                if (blockStateData != null && serverBlockId < blockStateData.size()) {
+            // If no translation exists, try to resolve from stored block state data
+            if (clientBlockId == -1) {
+                if (blockStateData != null && serverBlockId < blockStateDataSize) {
                     byte[] stateBytes = blockStateData.get(serverBlockId);
                     if (stateBytes != null) {
                         try {
                             boolean[] dummy = new boolean[1];
                             var serverEntry = Mapper.StateEntry.deserialize(serverBlockId, stateBytes, dummy);
                             // Get or create the client ID for this BlockState
-                            // This will return an existing ID or create a new one
                             clientBlockId = clientMapper.getIdForBlockState(serverEntry.state);
                             // Update the translation table for future use
                             blockTranslation.put(serverBlockId, clientBlockId);
@@ -172,20 +176,26 @@ public class MapperTranslator {
                             clientBlockId = 0; // Map to air
                         }
                     } else {
-                        Logger.warn("No state data for server block ID " + serverBlockId + ", mapping to air");
-                        clientBlockId = 0; // Map unknown to air
+                        // No state data available - this shouldn't happen but map to air
+                        Logger.warn("Server block ID " + serverBlockId + " has null state data, mapping to air. " +
+                            "Translation table size: " + translationTableSize + ", block state data size: " + blockStateDataSize);
+                        clientBlockId = 0;
                     }
                 } else {
-                    Logger.warn("Server block ID " + serverBlockId + " out of range for stored state data (size: " + 
-                        (serverBlockStateData.get(worldId) != null ? serverBlockStateData.get(worldId).size() : 0) + "), mapping to air");
-                    clientBlockId = 0; // Map unknown to air
+                    // Server block ID is beyond what we have state data for
+                    // This means we received section data before the MapperSync that contains this ID
+                    Logger.warn("Server block ID " + serverBlockId + " not in translation table (size: " + translationTableSize + 
+                        ") and beyond stored state data (size: " + blockStateDataSize + "). " +
+                        "This may indicate a race condition between MapperSync and section data. Mapping to air.");
+                    clientBlockId = 0;
                 }
             }
             
-            // Final validation - if we still have an invalid ID, use air
+            // Final safety check - ensure clientBlockId is valid for the client mapper
+            // This shouldn't happen after resolution, but guard against it
             if (clientBlockId < 0 || clientBlockId >= clientMapper.getBlockStateCount()) {
-                Logger.warn("Client block ID " + clientBlockId + " still out of bounds after resolution (max: " + 
-                    clientMapper.getBlockStateCount() + "), mapping to air");
+                Logger.warn("Resolved client block ID " + clientBlockId + " is out of bounds (max: " + 
+                    clientMapper.getBlockStateCount() + ") for server block ID " + serverBlockId + ". Mapping to air.");
                 clientBlockId = 0;
             }
             

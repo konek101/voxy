@@ -3,6 +3,7 @@ package me.cortex.voxy.server;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.SaveLoadSystem3;
 import me.cortex.voxy.common.world.WorldSection;
+import me.cortex.voxy.common.world.other.Mapper;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
 import me.cortex.voxy.server.network.LodSectionDataPacket;
 import me.cortex.voxy.server.network.LodSectionDeletePacket;
@@ -30,7 +31,8 @@ public class ServerLodSyncService {
     private final Thread syncThread;
     private final BlockingQueue<SectionUpdate> pendingUpdates = new LinkedBlockingQueue<>();
 
-    private record SectionUpdate(WorldIdentifier worldId, long sectionKey, byte[] data, boolean isDelete) {}
+    // maxBlockId tracks the highest block ID in the section data (for ensuring MapperSync coverage)
+    private record SectionUpdate(WorldIdentifier worldId, long sectionKey, byte[] data, boolean isDelete, int maxBlockId) {}
     
     private static class PlayerSyncState {
         final ServerPlayer player;
@@ -89,14 +91,20 @@ public class ServerLodSyncService {
             
             try {
                 // Check if we need to send a mapper sync before sending section data
+                // We need to ensure the mapper sync covers all block IDs in the section data
                 if (engine != null && !update.isDelete) {
                     var mapper = engine.getMapper();
                     int currentBlockCount = mapper.getBlockStateCount();
                     int currentBiomeCount = mapper.getBiomeEntries().length;
                     
+                    // Sync if mapper has grown OR if section contains block IDs we haven't synced
+                    // The section's maxBlockId + 1 is the minimum number of entries needed
+                    int requiredBlockCount = update.maxBlockId + 1;
+                    
                     if (currentBlockCount > state.lastSyncedBlockStateCount || 
-                        currentBiomeCount > state.lastSyncedBiomeCount) {
-                        // Mapper has new entries, resync before sending section
+                        currentBiomeCount > state.lastSyncedBiomeCount ||
+                        requiredBlockCount > state.lastSyncedBlockStateCount) {
+                        // Mapper has new entries or section needs entries we haven't synced
                         sendMapperSync(player, engine, update.worldId.getWorldId());
                         state.lastSyncedBlockStateCount = currentBlockCount;
                         state.lastSyncedBiomeCount = currentBiomeCount;
@@ -260,12 +268,21 @@ public class ServerLodSyncService {
         if (!VoxyServerConfig.CONFIG.syncLodsToPlayers) return;
         
         try {
+            // Calculate the maximum block ID in this section before serializing
+            int maxBlockId = 0;
+            for (long state : section._unsafeGetRawDataArray()) {
+                int blockId = Mapper.getBlockId(state);
+                if (blockId > maxBlockId) {
+                    maxBlockId = blockId;
+                }
+            }
+            
             var serializedData = SaveLoadSystem3.serialize(section);
             byte[] data = new byte[(int) serializedData.size];
             MemoryUtil.memByteBuffer(serializedData.address, (int) serializedData.size).get(data);
             serializedData.free();
             
-            this.pendingUpdates.add(new SectionUpdate(worldId, section.key, data, false));
+            this.pendingUpdates.add(new SectionUpdate(worldId, section.key, data, false, maxBlockId));
         } catch (Exception e) {
             Logger.error("Error serializing section for sync", e);
         }
@@ -276,7 +293,7 @@ public class ServerLodSyncService {
      */
     public void enqueueSectionDelete(WorldIdentifier worldId, long sectionKey) {
         if (!VoxyServerConfig.CONFIG.syncLodsToPlayers) return;
-        this.pendingUpdates.add(new SectionUpdate(worldId, sectionKey, null, true));
+        this.pendingUpdates.add(new SectionUpdate(worldId, sectionKey, null, true, 0));
     }
 
     public void shutdown() {
