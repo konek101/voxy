@@ -7,6 +7,7 @@ import me.cortex.voxy.commonImpl.WorldIdentifier;
 import me.cortex.voxy.server.network.LodSectionDataPacket;
 import me.cortex.voxy.server.network.LodSectionDeletePacket;
 import me.cortex.voxy.server.network.LodSectionRequestPacket;
+import me.cortex.voxy.server.network.MapperSyncPacket;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -159,6 +160,9 @@ public class ServerLodSyncService {
 
             var engine = this.instance.getNullable(identifier);
             if (engine == null) continue;
+            
+            // Send mapper sync FIRST so client can translate block state IDs
+            sendMapperSync(player, engine, worldId);
 
             // Iterate through all stored sections and send them
             engine.storage.iterateStoredSectionPositions(sectionKey -> {
@@ -189,6 +193,23 @@ public class ServerLodSyncService {
 
         state.initialSyncComplete = true;
         Logger.info("Completed initial LOD sync for player " + player.getName().getString());
+    }
+    
+    /**
+     * Send the mapper sync packet to a player.
+     * This must be sent before any LOD section data so the client can translate block state IDs.
+     */
+    private void sendMapperSync(ServerPlayer player, me.cortex.voxy.common.world.WorldEngine engine, String worldId) {
+        try {
+            var packet = MapperSyncPacket.fromMapper(worldId, engine.getMapper());
+            var buf = PacketByteBufs.create();
+            packet.write(buf);
+            ServerPlayNetworking.send(player, MapperSyncPacket.ID, buf);
+            Logger.info("Sent mapper sync to player " + player.getName().getString() + " for world " + worldId + 
+                       " (" + packet.blockStateMappings.size() + " block states, " + packet.biomeMappings.size() + " biomes)");
+        } catch (Exception e) {
+            Logger.error("Error sending mapper sync to player", e);
+        }
     }
 
     /**

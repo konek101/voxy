@@ -11,6 +11,7 @@ import me.cortex.voxy.server.network.LodSectionDataPacket;
 import me.cortex.voxy.server.network.LodSectionDeletePacket;
 import me.cortex.voxy.server.network.LodSectionRequestPacket;
 import me.cortex.voxy.server.network.LodSectionUploadPacket;
+import me.cortex.voxy.server.network.MapperSyncPacket;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
@@ -40,6 +41,17 @@ public class ClientLodNetworkHandler {
         ClientPlayNetworking.registerGlobalReceiver(LodSectionDeletePacket.ID, (client, handler, buf, responseSender) -> {
             var packet = new LodSectionDeletePacket(buf);
             client.execute(() -> handleSectionDelete(packet));
+        });
+
+        // Register MapperSyncPacket handler - must be processed before section data
+        ClientPlayNetworking.registerGlobalReceiver(MapperSyncPacket.ID, (client, handler, buf, responseSender) -> {
+            var packet = new MapperSyncPacket(buf);
+            client.execute(() -> handleMapperSync(packet));
+        });
+
+        // When disconnecting, clear translation tables
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            MapperTranslator.clearAll();
         });
 
         // When joining a server, request LOD data when world is ready
@@ -102,13 +114,24 @@ public class ClientLodNetworkHandler {
             return;
         }
 
-        // Deserialize and load the section
-        // WARNING: This may cause crashes if server and client have different block state mappings.
-        // The server's Mapper assigns different internal IDs than the client's Mapper.
+        // Check if we have a translation table for this world
+        if (!MapperTranslator.hasTranslation(packet.worldId)) {
+            Logger.warn("Cannot handle LOD section data: no mapper translation available for world " + packet.worldId + ". Waiting for MapperSyncPacket.");
+            return;
+        }
+
+        // Deserialize and load the section with block ID translation
         try {
             // Create a memory buffer from the compressed data
             var data = new MemoryBuffer(packet.compressedData.length);
             MemoryUtil.memByteBuffer(data.address, (int) data.size).put(packet.compressedData);
+            
+            // Translate block IDs in the raw data before deserializing
+            if (!MapperTranslator.translateSectionData(packet.worldId, data)) {
+                Logger.warn("Failed to translate LOD section data for world " + packet.worldId);
+                data.free();
+                return;
+            }
             
             var section = engine.acquire(packet.sectionKey);
             if (section != null) {
@@ -122,8 +145,42 @@ public class ClientLodNetworkHandler {
             }
             data.free();
         } catch (Exception e) {
-            Logger.error("Error handling LOD section data from server. This may be caused by block state ID mismatch between server and client.", e);
+            Logger.error("Error handling LOD section data from server", e);
         }
+    }
+    
+    private static void handleMapperSync(MapperSyncPacket packet) {
+        var instance = VoxyCommon.getInstance();
+        if (instance == null) {
+            Logger.warn("Cannot handle mapper sync: VoxyCommon instance is null");
+            return;
+        }
+
+        var level = Minecraft.getInstance().level;
+        if (level == null) {
+            Logger.warn("Cannot handle mapper sync: client level is null");
+            return;
+        }
+
+        var identifier = WorldIdentifier.of(level);
+        if (identifier == null) {
+            Logger.warn("Cannot handle mapper sync: world identifier is null");
+            return;
+        }
+        if (!identifier.getWorldId().equals(packet.worldId)) {
+            // World ID mismatch - not an error, just a different world
+            return;
+        }
+
+        var engine = instance.getOrCreate(identifier);
+        if (engine == null) {
+            Logger.warn("Cannot handle mapper sync: failed to get or create world engine");
+            return;
+        }
+
+        // Process the mapper sync to build translation tables
+        MapperTranslator.processMapperSync(packet, engine);
+        Logger.info("Received mapper sync from server for world: " + packet.worldId);
     }
 
     private static void handleSectionDelete(LodSectionDeletePacket packet) {

@@ -24,10 +24,9 @@ public class VoxyServerConfig {
     public boolean enabled = true;
     public boolean generateLodsOnChunkGeneration = true;
     public boolean generateLodsOnChunkModification = true;
-    // WARNING: Syncing LODs to players is currently experimental and may cause client crashes
-    // due to block state ID mismatches between server and client Mappers.
-    // Only enable if all clients have matching mod configurations.
-    public boolean syncLodsToPlayers = false;
+    // Sync LODs to players. When enabled, the server sends mapper sync before LOD data
+    // to translate block state IDs between server and client.
+    public boolean syncLodsToPlayers = true;
     public boolean acceptLodsFromClients = true;
     public int serviceThreads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
     public int syncPollTimeoutMs = 100;
