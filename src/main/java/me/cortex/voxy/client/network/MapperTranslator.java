@@ -9,6 +9,8 @@ import me.cortex.voxy.common.world.other.Mapper;
 import me.cortex.voxy.server.network.MapperSyncPacket;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -25,6 +27,8 @@ public class MapperTranslator {
     // Translation tables per world: server block ID -> client block ID
     private static final ConcurrentHashMap<String, Int2IntOpenHashMap> blockIdTranslations = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Int2IntOpenHashMap> biomeIdTranslations = new ConcurrentHashMap<>();
+    // Store serialized block state data for later resolution if needed
+    private static final ConcurrentHashMap<String, List<byte[]>> serverBlockStateData = new ConcurrentHashMap<>();
     
     /**
      * Process a MapperSyncPacket and build translation tables for the world.
@@ -39,6 +43,10 @@ public class MapperTranslator {
         }
         
         var clientMapper = engine.getMapper();
+        
+        // Store the serialized block state data for later resolution
+        List<byte[]> blockStateDataList = new ArrayList<>(packet.blockStateMappings);
+        serverBlockStateData.put(packet.worldId, blockStateDataList);
         
         // Build block state translation table
         var blockTranslation = new Int2IntOpenHashMap(packet.blockStateMappings.size());
@@ -105,9 +113,10 @@ public class MapperTranslator {
      * 
      * @param worldId The world ID
      * @param data The raw section data buffer
+     * @param clientMapper The client's Mapper for bounds validation
      * @return true if translation was successful
      */
-    public static boolean translateSectionData(String worldId, MemoryBuffer data) {
+    public static boolean translateSectionData(String worldId, MemoryBuffer data, Mapper clientMapper) {
         var blockTranslation = blockIdTranslations.get(worldId);
         
         if (blockTranslation == null) {
@@ -129,6 +138,9 @@ public class MapperTranslator {
         int lutSize = (int) (metadata & 0xFFFF);
         long lutBasePtr = ptr + WorldSection.SECTION_VOLUME * 2;
         
+        // Get the current client Mapper size for bounds validation
+        int maxClientBlockId = clientMapper.getBlockStateCount();
+        
         // Translate each LUT entry
         for (int i = 0; i < lutSize; i++) {
             long lutPtr = lutBasePtr + i * 8L;
@@ -138,9 +150,34 @@ public class MapperTranslator {
             int serverBiomeId = Mapper.getBiomeId(oldId);
             int light = Mapper.getLightId(oldId);
             
-            int clientBlockId = blockTranslation.getOrDefault(serverBlockId, 0);
-            if (clientBlockId == -1) {
-                clientBlockId = 0; // Map unknown to air
+            int clientBlockId = blockTranslation.getOrDefault(serverBlockId, -1);
+            
+            // Validate the client block ID is within bounds
+            if (clientBlockId == -1 || clientBlockId >= maxClientBlockId) {
+                // Translation doesn't exist or is out of bounds - try to resolve via the stored BlockState
+                var blockStateData = serverBlockStateData.get(worldId);
+                if (blockStateData != null && serverBlockId < blockStateData.size()) {
+                    byte[] stateBytes = blockStateData.get(serverBlockId);
+                    if (stateBytes != null) {
+                        try {
+                            boolean[] dummy = new boolean[1];
+                            var serverEntry = Mapper.StateEntry.deserialize(serverBlockId, stateBytes, dummy);
+                            // Get or create the client ID for this BlockState
+                            clientBlockId = clientMapper.getIdForBlockState(serverEntry.state);
+                            // Update the translation table for future use
+                            blockTranslation.put(serverBlockId, clientBlockId);
+                            // Update the max count
+                            maxClientBlockId = Math.max(maxClientBlockId, clientMapper.getBlockStateCount());
+                        } catch (Exception e) {
+                            Logger.error("Failed to resolve block state " + serverBlockId + " during translation", e);
+                            clientBlockId = 0; // Map to air
+                        }
+                    } else {
+                        clientBlockId = 0; // Map unknown to air
+                    }
+                } else {
+                    clientBlockId = 0; // Map unknown to air
+                }
             }
             
             long newId = Mapper.composeMappingId((byte) light, clientBlockId, serverBiomeId);
@@ -156,6 +193,7 @@ public class MapperTranslator {
     public static void clearTranslation(String worldId) {
         blockIdTranslations.remove(worldId);
         biomeIdTranslations.remove(worldId);
+        serverBlockStateData.remove(worldId);
     }
     
     /**
@@ -164,5 +202,6 @@ public class MapperTranslator {
     public static void clearAll() {
         blockIdTranslations.clear();
         biomeIdTranslations.clear();
+        serverBlockStateData.clear();
     }
 }

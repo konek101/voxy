@@ -127,7 +127,8 @@ public class ClientLodNetworkHandler {
             MemoryUtil.memByteBuffer(data.address, (int) data.size).put(packet.compressedData);
             
             // Translate block IDs in the raw data before deserializing
-            if (!MapperTranslator.translateSectionData(packet.worldId, data)) {
+            // Pass the client's Mapper for bounds validation and on-the-fly resolution
+            if (!MapperTranslator.translateSectionData(packet.worldId, data, engine.getMapper())) {
                 Logger.warn("Failed to translate LOD section data for world " + packet.worldId);
                 data.free();
                 return;
